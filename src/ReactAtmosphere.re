@@ -3,23 +3,44 @@ type layerState =
   | [@bs.as 0] Active
   | [@bs.as 1] TransitionExit;
 
+type layerRenderArgsJs = {
+  state: int,
+  completeTransitionExit: unit => unit,
+};
 type layerRenderArgs = {
   state: layerState,
   completeTransitionExit: unit => unit,
 };
+type layerRenderJs = layerRenderArgsJs => React.element;
 type layerRender = layerRenderArgs => React.element;
-
-type layer = {
-  key: string,
-  state: layerState,
-  render: layerRender,
+let layerRenderToLayerRenderJs =
+    (render, {state, completeTransitionExit}: layerRenderArgsJs) => {
+  render({
+    state: Js.Option.getExn(layerStateFromJs(state)),
+    completeTransitionExit,
+  });
 };
 
 module Layer = {
   [@bs.module "react-atmosphere"] [@react.component]
   external make:
-    (~render: layerRender, ~transitionExit: bool=?, unit) => React.element =
+    (~render: layerRenderJs, ~transitionExit: bool=?, unit) => React.element =
     "Layer";
+
+  let makeProps =
+      (
+        ~render: layerRender,
+        ~transitionExit: option(bool)=?,
+        ~key: option(string)=?,
+        (),
+      ) => {
+    makeProps(
+      ~render=layerRenderToLayerRenderJs(render),
+      ~transitionExit?,
+      ~key?,
+      (),
+    );
+  };
 };
 
 module LayerContainer = {
@@ -29,15 +50,7 @@ module LayerContainer = {
 
 module Popper = {
   module Options = {
-    [@bs.deriving jsConverter]
-    type placement = [
-      | [@bs.as "top"] `Top
-      | [@bs.as "bottom"] `Bottom
-      | [@bs.as "left"] `Left
-      | [@bs.as "right"] `Right
-    ];
-
-    type t = {placement: option(placement)};
+    type t = {placement: option(string)};
   };
 
   module State = {
@@ -46,6 +59,11 @@ module Popper = {
 };
 
 module PopperLayer = {
+  type renderArgsJs = {
+    state: int,
+    completeTransitionExit: unit => unit,
+    popperState: option(Popper.State.t),
+  };
   type renderArgs = {
     state: layerState,
     completeTransitionExit: unit => unit,
@@ -57,7 +75,7 @@ module PopperLayer = {
     (
       ~id: string=?,
       ~reference: ReactDOMRe.Ref.currentDomRef,
-      ~render: renderArgs => React.element,
+      ~render: renderArgsJs => React.element,
       ~onOutsideClick: unit => unit=?,
       ~options: Popper.Options.t=?,
       ~transitionExit: bool=?,
@@ -65,6 +83,35 @@ module PopperLayer = {
     ) =>
     React.element =
     "PopperLayer";
+
+  let makeProps =
+      (
+        ~id: option(string)=?,
+        ~reference: ReactDOMRe.Ref.currentDomRef,
+        ~render: renderArgs => React.element,
+        ~onOutsideClick: option(unit => unit)=?,
+        ~options: option(Popper.Options.t)=?,
+        ~transitionExit: option(bool)=?,
+        ~key: option(string)=?,
+        (),
+      ) => {
+    makeProps(
+      ~id?,
+      ~reference,
+      ~render=
+        ({state, completeTransitionExit, popperState}) =>
+          render({
+            state: Js.Option.getExn(layerStateFromJs(state)),
+            completeTransitionExit,
+            popperState,
+          }),
+      ~onOutsideClick?,
+      ~options?,
+      ~transitionExit?,
+      ~key?,
+      (),
+    );
+  };
 };
 
 module Tooltip = {
@@ -101,12 +148,16 @@ module Tooltip = {
 };
 
 module Dialog = {
+  type renderBackdropArgsJs = {
+    state: int,
+    onClick: option(unit => unit),
+  };
   type renderBackdropArgs = {
     state: layerState,
     onClick: option(unit => unit),
   };
   type configContext = {
-    renderBackdrop: option(renderBackdropArgs => React.element),
+    renderBackdrop: option(renderBackdropArgsJs => React.element),
     containerStyles: option(ReactDOMRe.Style.t),
     transitionDuration: option(int),
   };
@@ -115,41 +166,81 @@ module Dialog = {
   external configContext: React.Context.t(configContext) =
     "DialogConfigContext";
 
+  type renderArgsJs = {state: int};
   type renderArgs = {state: layerState};
 
   module Layer = {
     [@bs.module "react-atmosphere"] [@react.component]
     external make:
       (
-        ~render: renderArgs => React.element,
-        ~state: layerState,
+        ~render: renderArgsJs => React.element,
+        ~state: int,
         ~completeTransitionExit: unit => unit,
         ~onBackdropClick: unit => unit=?,
         unit
       ) =>
       React.element =
       "DialogLayer";
+
+    let makeProps =
+        (
+          ~render: renderArgs => React.element,
+          ~state: layerState,
+          ~completeTransitionExit: unit => unit,
+          ~onBackdropClick: option(unit => unit)=?,
+          ~key: option(string)=?,
+          (),
+        ) => {
+      makeProps(
+        ~render=
+          ({state}) =>
+            render({state: Js.Option.getExn(layerStateFromJs(state))}),
+        ~state=layerStateToJs(state),
+        ~completeTransitionExit,
+        ~onBackdropClick?,
+        ~key?,
+        (),
+      );
+    };
   };
 
   [@bs.module "react-atmosphere"] [@react.component]
   external make:
     (
-      ~render: renderArgs => React.element,
+      ~render: renderArgsJs => React.element,
       ~onBackdropClick: unit => unit=?,
       unit
     ) =>
     React.element =
     "Dialog";
+
+  let makeProps = (~render, ~onBackdropClick, ~key=?, ()) => {
+    makeProps(
+      ~render=
+        ({state}) =>
+          render({state: Js.Option.getExn(layerStateFromJs(state))}),
+      ~onBackdropClick?,
+      ~key?,
+      (),
+    );
+  };
 };
 
 module API = {
   [@bs.module "react-atmosphere"] [@bs.scope "LayerAPI"]
-  external pushLayer: (~render: layerRender) => string = "pushLayer";
+  external pushLayer: (~render: layerRenderJs) => string = "pushLayer";
   [@bs.module "react-atmosphere"] [@bs.scope "LayerAPI"]
-  external updateLayer: (~key: string, ~render: layerRender) => unit =
+  external updateLayer: (~key: string, ~render: layerRenderJs) => unit =
     "updateLayer";
   [@bs.module "react-atmosphere"] [@bs.scope "LayerAPI"]
   external transitionExitLayer: (~key: string) => unit = "transitionExitLayer";
   [@bs.module "react-atmosphere"] [@bs.scope "LayerAPI"]
   external removeLayer: (~key: string) => unit = "removeLayer";
+
+  let pushLayer = (~render: layerRender): string => {
+    pushLayer(~render=layerRenderToLayerRenderJs(render));
+  };
+  let updateLayer = (~key: string, ~render: layerRender): unit => {
+    updateLayer(~key, ~render=layerRenderToLayerRenderJs(render));
+  };
 };
